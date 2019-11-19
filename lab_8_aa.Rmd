@@ -1,0 +1,201 @@
+---
+title: "Lab 8 - ANOVA, chi-square, beeswarm and a cool table"
+author: "Anna Abelman"
+date: "11/19/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(car)
+library(janitor)
+library(ggbeeswarm)
+library(kableExtra)
+```
+
+### 1. Read in data (penguins.csv)
+
+```{r}
+penguins <- read_csv("penguins.csv") %>% 
+  clean_names()
+```
+
+
+### 2. Find counts of penguins by sex and species
+```{r}
+penguins_counts <- penguins %>% 
+  count(species, sex)
+```
+
+### 3. Companre flipper sizes for female penguins across 3 species
+
+single factor = species
+random variable = flipper length
+
+```{r}
+penguins_f <- penguins %>% 
+  filter(sex == "FEMALE")
+
+# look at the data to see what the best options are next
+
+# faceted histograms
+ggplot(data = penguins_f, aes(x = flipper_length_mm))+
+  geom_histogram()+
+  facet_wrap(~species)
+#looking to see if they are normally distributed, and even if not the sample size is larger enough so that the CTL applies
+
+# faceted qqplot
+ggplot(data = penguins_f, aes(sample = flipper_length_mm))+
+  geom_qq()+
+  facet_wrap(~species)
+#are the relationship linear in each group? yes, so  normally distribution (CLT applies once again if not sure)
+```
+
+### 4. Find summary statistics
+Remember, the variances are assumed the same in ANOVA test.
+```{r}
+penguin_f_summary <- penguins_f %>% 
+  group_by(species) %>% 
+  summarize(
+    mean_flipper_length = mean(flipper_length_mm),
+    sd_flipper_length = sd(flipper_length_mm),
+    sample_size = n(),
+    se_flipper_length = sd(flipper_length_mm)/ sqrt(n()),
+    var_flipper_length = var(flipper_length_mm)
+  )
+```
+
+Levene's Test (hypothesis test for equal variances):
+
+```{r}
+leveneTest(flipper_length_mm ~ species, data = penguins_f)
+# testing variances across many groups
+# null hypothesis (HO) is the group variances are equal
+#significance level is 0.05, so we cannot reject the null
+```
+
+Conclusion: Retain the null hypothesis that variances are equal because there is not enough evideance to conclude that the variances are significantly different (0.057).
+
+OK, I've done my exploratory analysis, and ALL of these pieces combined are making me think that a one-way ANOVA is an appropriate way to compare means between the 3 species.
+
+### 5. Make a beeswarm plot with the mean and standand deviation overlayed on top of it
+
+The three most common:
+ - standard deviation
+ - standard error
+ - confidence interval
+
+```{r}
+#using two different dataframe so must include details in geom lines
+ggplot()+
+  geom_beeswarm(data = penguins_f, 
+                aes(x = species, y = flipper_length_mm),
+                size = 1,
+                alpha = 0.6,
+                color = "gray60")+
+  scale_x_discrete(labels = c("Adelie", "Chinstrap", "Gentoo"))+
+  geom_point(data = penguin_f_summary,
+             aes(x = species, y = mean_flipper_length),
+             color = "blue",
+            size = 2 )+
+  geom_errorbar(data = penguin_f_summary,
+            aes(x = species, 
+                ymin = mean_flipper_length - sd_flipper_length,
+                ymax = mean_flipper_length + sd_flipper_length),
+            width = .10,
+            color = "blue")+
+  theme_light()
+# ymin and ymax is the calcuations behind standard error range
+```
+**NOTE**: make sure that if you're showing summary statistics, you actually say what you're showing
+
+**Figure 1.** Flipper length (mm) for three female penguins (Adelie, Chinstrap, and Gentoo) observed at Palmer Station LTER, Antarctica. Gray points indicate individual flipper lengths, blus dots indicate group means, error bars indicate $\pm$ 1 standard deviation. Data source:
+
+### 6. One-way ANOVA
+
+Is there a significant difference in mean flipper length for female penguins between the three species (Adelie, Chinstrap, and Gentoo)?
+
+```{r}
+penguin_aov <- aov(flipper_length_mm ~ species, data = penguins_f)
+
+summary(penguin_aov)
+# f-stat is the ratio between group and within group variances- how spread out
+# for these, there is a very larger spread of data between the groups and a smaller spread within each group --> large f-stat
+# showing that the likelihood of drawing these groups from the same populations is very low --> very small p-value
+```
+
+Null Hypothesis: The means are equal across all groups
+Alternative Hypothesis: The means are not equal across all groups (at least two or ALL)
+
+Conclusion: The mean flipper length for the three species (for female penguins) are not equal.
+
+Now, we need to see which ones differ, so we use Post-hoc pairwise comparisons.
+
+```{r}
+TukeyHSD(penguin_aov)
+```
+HO: no significant difference between the groups
+
+Conclusion: One-way ANOVA with post-hoc Tukey's HSD reveals significant difference in mean flipper length across all species (Gentoo, mean = ..., Chinstrap, mean = ..., Adelie, mean = ...) (F(df) = ..., p < 0.001 for all pariwaise comparisons). 
+
+
+### 7. Make nicer tables (with proportions)
+
+```{r}
+party_relig <- gss_cat %>% 
+  filter(partyid %in% c("Strong republican", "Strong democrat")) %>% 
+  filter(relig %in% c("None", "Catholic")) %>% 
+  count(partyid, relig)
+
+# trying ot create a contingency table (wider format)
+party_relig_table <- party_relig %>% 
+  pivot_wider(names_from = relig, values_from = n)
+
+
+```
+
+### 8. Make a nice table of proportions using janitor::adorn_*
+
+```{r}
+party_relig_props <- party_relig_table %>% 
+  adorn_percentages(denominator = "row") %>% 
+  adorn_pct_formatting(digits = 1) %>% 
+  adorn_ns(position = "front")
+
+kable(party_relig_props) %>% 
+  kable_styling()
+
+```
+
+Questions to ask now:
+- Are political and regligious affiliation independent from each other?
+- Is there a significant association between political affiliation and religious affiliation?
+- Is there a significant effect of political association (strong republican vs. strong democrat) on religious affiliation (non, Catholic)
+- Is there a significant difference in religious affiliation between strong republican and strong democrats?
+
+```{r}
+# make this a contingency table THAT ONLY CONTAINS THE ACTUAL COUNTS
+chi_counts <- party_relig_table %>% 
+  select(-partyid)
+chi_counts
+```
+
+HO:
+- there is no significant association between party affiliation and religious affiliation
+- there is no significant difference in religious affiliation between the two party groups
+- party and religious affiliation are independent
+
+```{r}
+my_party_chi <- chisq.test(chi_counts)
+my_party_chi
+```
+
+Conclusion: 
+- There is a significant difference in religious affiliation (none, Catholic) between strong republicans and strong democrats ($\chi^2$ = ..., p < 0.001)...
+- There is no significant assoication between party ID and religious association
+- Party and religious affiliation are independent
+
+
+
+
